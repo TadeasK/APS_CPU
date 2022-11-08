@@ -14,7 +14,7 @@ module processor( input         clk, reset, //
                 );
     
     wire ALUSrc; // 0/1 Which source to use for SrcB
-    wire [2:0] AluControl; // 0-7 which operation should ALU make
+    wire [3:0] AluControl; // 0-7 which operation should ALU make
     wire MemWrite; // 0/1 Write to memory?
     wire MemToReg; // 0/1 Which source to use for registerSet write
     wire RegWrite; // 0/1 Write to register?
@@ -38,7 +38,7 @@ module processor( input         clk, reset, //
     wire [31:0] brJalxMuxOut;
     wire [31:0] PCn;
     
-    wire [31:0] pc = 32'b0;
+    wire [31:0] pc;
     wire [31:0] PCPlus4;
     wire [31:0] ImmOpPlusPC;
     wire [31:0] SrcA;
@@ -62,17 +62,17 @@ module processor( input         clk, reset, //
                    BranchJal, BranchJalr, immControl
                    );
     
-    immDecode immDec(instruction[31:7],
+    immDecode immDec(instruction[31:0],
                        immControl,
                        ImmOp);
 
     registerSet registers(instruction[19:15], 
                           instruction[24:20],
                           instruction[11:7],
-                          clk, RegWrite,
+                          clk, reset, RegWrite,
                           res, Reg1, Reg2);
     
-    ALU alu(AluControl, SrcA, SrcB, ALUout, Zero);
+    ALU alu(AluControl, pc, SrcA, SrcB, ALUout, Zero);
     
     register PCRegister(PCn, clk, reset, pc);
     
@@ -98,21 +98,26 @@ endmodule
 //                 ARITHMETIC AND LOGIC UNIT
 //=========================================================================================
 //=========================================================================================
-module ALU( input [2:0] ALUControl, 
-            input [31:0] SrcA, SrcB,
+module ALU( input [3:0] ALUControl,
+            input [31:0] pc,
+            input signed [31:0] SrcA, SrcB,
             output reg [31:0] ALUout, 
             output reg Zero
           );
 
 // ALUControl
-// 000 = +
-// 001 = &
-// 010 = -
-// 011 = <
-// 100 = /
-// 101 = %
-// 110 = !<
-// 111 = LUI
+// 0000 = +
+// 0001 = &
+// 0010 = -
+// 0011 = <
+// 0100 = /
+// 0101 = %
+// 0110 = !<
+// 0111 = LUI
+// 1000 = <<
+// 1001 = >>    
+// 1010 = auipc
+
 
     always @(*)
     begin
@@ -125,6 +130,9 @@ module ALU( input [2:0] ALUControl,
             5: ALUout = SrcA % SrcB;
             6: ALUout = !(SrcA < SrcB);
             7: ALUout = {SrcB, 12'b0};
+            8: ALUout = SrcA << SrcB;
+            9: ALUout = SrcA >> SrcB;
+            10: ALUout = pc + {SrcB, 12'b0};
             default: ALUout = 32'bX;
         endcase
     end
@@ -142,7 +150,7 @@ endmodule
 //                 IMMIDIATE CONTROL
 //=========================================================================================
 //=========================================================================================
-module immDecode(input [24:0] inst, // value of instruction[31:7]
+module immDecode(input [31:0] inst, // value of instruction[31:0]
                   input [2:0] control,
                   output reg [31:0] immOp
                  );
@@ -157,11 +165,11 @@ module immDecode(input [24:0] inst, // value of instruction[31:7]
     always @(*)
     begin
         case(control)
-            0: immOp = { 20'b0, inst[24:13]}; // I
-            1: immOp = { 20'b0, inst[24:18], inst[4:0]}; // S
-            2: immOp = { 19'b0, inst[24], inst[0], inst[23:18], inst[4:1], 1'b0}; // B
-            3: immOp = { 11'b0, inst[24], inst[12:5], inst[13], inst[23:14],1'b0}; // J
-            4: immOp = { inst[24:5], 12'b0}; // U
+            0: immOp = { {20{inst[31]}}, inst[31:20]}; // I
+            1: immOp = { {20{inst[31]}}, inst[31:25], inst[11:7]}; // S
+            2: immOp = { {19{inst[31]}}, inst[7], inst[31:25], inst[11:8], 1'b0}; // B
+            3: immOp = { {12{inst[31]}}, inst[19:12], inst[20], inst[30:21],1'b0}; // J
+            4: immOp = { inst[31:12], 12'b0}; // U
             default:;
         endcase
     end
@@ -175,7 +183,7 @@ endmodule
 module CTRL_unit( input [6:0] opCode, funct7,
                   input [2:0] funct3,
                   output ALUSrc,
-                  output [2:0] ALUControl,
+                  output [3:0] ALUControl,
                   output MemWrite,
                   output MemToReg,
                   output RegWrite,
@@ -184,47 +192,55 @@ module CTRL_unit( input [6:0] opCode, funct7,
                   output BranchJalr,
                   output [2:0] immControl
                 );
-    reg [12:0] out; // output bits in order of module arguments
+    reg [13:0] out; // output bits in order of module arguments
 
 // ALUControl
-// 000 = +    // immControl
-// 001 = &    // 000 I-Type
-// 010 = -    // 001 S-Type
-// 011 = <    // 010 B-Type
-// 100 = /    // 011 J-Type
-// 101 = %    // 100 U-Type
-// 110 = !<
-// 111 = LUI
+// 0000 = +    // immControl
+// 0001 = &    // 000 I-Type
+// 0010 = -    // 001 S-Type
+// 0011 = <    // 010 B-Type
+// 0100 = /    // 011 J-Type
+// 0101 = %    // 100 U-Type
+// 0110 = !<
+// 0111 = LUI
+// 1000 = <<
+// 1001 = >>    
+// 1010 = auipc
 
     always @(*)
     begin
         casez ({opCode,funct7,funct3})
-            'b0110011_0000000_000: out = 'b0_000_0_0_1_0_0_0_XXX;   // add
+            'b0110011_0000000_000: out = 'b0_0000_0_0_1_0_0_0_XXX;   // add
 
-            'b0010011_???????_000: out = 'b1_000_0_0_1_0_0_0_000;   // addi
+            'b0010011_???????_000: out = 'b1_0000_0_0_1_0_0_0_000;   // addi
 
-            'b0110011_0000000_111: out = 'b0_001_0_0_1_0_0_0_XXX;   // and
-            'b0110011_0100000_000: out = 'b0_010_0_0_1_0_0_0_XXX;   // sub
-            'b0110011_0000000_010: out = 'b0_011_0_0_1_0_0_0_XXX;   // slt
-            'b0110011_0000001_100: out = 'b0_100_0_0_1_0_0_0_XXX;   // div
-            'b0110011_0000001_110: out = 'b0_101_0_0_1_0_0_0_XXX;   // rem
+            'b0110011_0000000_111: out = 'b0_0001_0_0_1_0_0_0_XXX;   // and
+            'b0110011_0100000_000: out = 'b0_0010_0_0_1_0_0_0_XXX;   // sub
+            'b0110011_0000000_010: out = 'b0_0011_0_0_1_0_0_0_XXX;   // slt
+            'b0110011_0000001_100: out = 'b0_0100_0_0_1_0_0_0_XXX;   // div
+            'b0110011_0000001_110: out = 'b0_0101_0_0_1_0_0_0_XXX;   // rem
+            'b0110011_0000000_001: out = 'b0_1000_0_0_1_0_0_0_XXX;   // sll           
+            'b0110011_0000000_101: out = 'b0_1001_0_0_1_0_0_0_XXX;   // srl           
+            'b0110011_0100000_101: out = 'b0_1001_0_0_1_0_0_0_XXX;   // sra           
 
-            'b1100011_???????_000: out = 'b0_010_0_X_0_1_0_0_010;   // beq
-            'b1100011_???????_100: out = 'b0_110_0_X_0_1_0_0_010;   // blt
+            'b1100011_???????_000: out = 'b0_0010_0_X_0_1_0_0_010;   // beq
+            'b1100011_???????_100: out = 'b0_0110_0_X_0_1_0_0_010;   // blt
 
-            'b0000011_???????_010: out = 'b1_000_0_1_1_0_0_0_000;   // lw
-            'b0100011_???????_010: out = 'bX_000_1_X_0_0_0_0_001;   // sw
-            'b0110111_???????_???: out = 'b1_111_0_0_1_0_0_0_100;   // lui
+            'b0000011_???????_010: out = 'b1_0000_0_1_1_0_0_0_000;   // lw
+            'b0100011_???????_010: out = 'b1_0000_1_X_0_0_0_0_001;   // sw
 
-            'b1101111_???????_???: out = 'bX_XXX_0_0_1_0_1_0_011;   // jal
-            'b1100111_???????_000: out = 'b1_000_0_0_1_0_0_1_000;   // jalr
+            'b0110111_???????_???: out = 'b1_0111_0_0_1_0_0_0_100;   // lui
+            'b0010111_???????_???: out = 'b1_1010_0_0_1_0_0_0_100;   // auipc
+
+            'b1101111_???????_???: out = 'bX_XXXX_0_0_1_0_1_0_011;   // jal
+            'b1100111_???????_000: out = 'b1_0000_0_0_1_0_0_1_000;   // jalr
             
-            default: out = 'bX_XXX_X_X_X_X_X_X_XX;
+            default: out = 'bX_XXXX_X_X_X_X_X_X_XX;
         endcase
     end
 
-    assign ALUSrc = out[12];
-    assign ALUControl = out[11:9];
+    assign ALUSrc = out[13];
+    assign ALUControl = out[12:9];
     assign MemWrite = out[8];
     assign MemToReg = out[7];
     assign RegWrite = out[6];
@@ -256,17 +272,22 @@ endmodule
 //=========================================================================================
 //=========================================================================================
 module registerSet ( input [4:0] A1, A2, A3,
-                     input clk, WE3,
+                     input clk, reset, WE3,
                      input [31:0] WD3,
                      output reg [31:0] RD1, RD2
                     );
 
     reg [31:0] rf[31:0];
-    wire zero = 0;
+    // wire zero = 0;
 
-    always @(*)
+    integer i;
+    always @(posedge clk or reset)
     begin
-        rf[0] <= zero;
+        if ( reset == 1 )
+            for (i = 0; i <= 31 ; i=i+1)
+            begin
+                rf[i] = 0;    
+            end
     end
 
     always @(A1)
@@ -300,9 +321,9 @@ module register(input [31:0] in,
     always @(posedge clk or reset)
     begin
         if (reset==1)
-            out = 0;
+            out <= 0;
         else
-            out = in;
+            out <= in;
     end
 endmodule
 //=========================================================================================
