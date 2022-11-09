@@ -42,14 +42,12 @@ module processor( input         clk, reset, //
     wire [31:0] PCPlus4;
     wire [31:0] ImmOpPlusPC;
     wire [31:0] SrcA;
-    wire [31:0] readData;    
 
     assign PCPlus4 = pc + 4;
     assign ImmOpPlusPC = ImmOp + pc;
     assign SrcA = Reg1; // Operand1 of ALU 
-    assign readData = data_from_mem; // Data read from data memory 
 
-    always @(BranchBeq or BranchJal or BranchJalr)
+    always @(*)
     begin
         BranchJalx = BranchJal || BranchJalr;
         BranchOutcome = (BranchBeq && Zero) || BranchJalx;
@@ -82,7 +80,7 @@ module processor( input         clk, reset, //
 
     mux2_1 brJalxMux(ALUout, PCPlus4, BranchJalx, brJalxMuxOut );
     
-    mux2_1 dataMemMux( brJalxMuxOut, readData, MemToReg, res);
+    mux2_1 dataMemMux( brJalxMuxOut, data_from_mem, MemToReg, res);
 
     mux2_1 PCMux(PCPlus4, branchTarget, BranchOutcome, PCn);
 
@@ -129,11 +127,11 @@ module ALU( input [3:0] ALUControl,
             4: ALUout = SrcA / SrcB;
             5: ALUout = SrcA % SrcB;
             6: ALUout = !(SrcA < SrcB);
-            7: ALUout = {SrcB, 12'b0};
+            7: ALUout = {SrcB[31:12], 12'b0};
             8: ALUout = SrcA << SrcB;
             9: ALUout = SrcA >> SrcB;
-            10: ALUout = pc + {SrcB, 12'b0};
-            default: ALUout = 32'bX;
+            10: ALUout = pc + {SrcB[31:12], 12'b0};
+            default:;
         endcase
     end
 
@@ -167,7 +165,7 @@ module immDecode(input [31:0] inst, // value of instruction[31:0]
         case(control)
             0: immOp = { {20{inst[31]}}, inst[31:20]}; // I
             1: immOp = { {20{inst[31]}}, inst[31:25], inst[11:7]}; // S
-            2: immOp = { {19{inst[31]}}, inst[7], inst[31:25], inst[11:8], 1'b0}; // B
+            2: immOp = { {20{inst[31]}}, inst[7], inst[30:25], inst[11:8], 1'b0}; // B
             3: immOp = { {12{inst[31]}}, inst[19:12], inst[20], inst[30:21],1'b0}; // J
             4: immOp = { inst[31:12], 12'b0}; // U
             default:;
@@ -201,7 +199,7 @@ module CTRL_unit( input [6:0] opCode, funct7,
 // 0011 = <    // 010 B-Type
 // 0100 = /    // 011 J-Type
 // 0101 = %    // 100 U-Type
-// 0110 = !<
+// 0110 = !<   // 111 R-Type
 // 0111 = LUI
 // 1000 = <<
 // 1001 = >>    
@@ -210,32 +208,32 @@ module CTRL_unit( input [6:0] opCode, funct7,
     always @(*)
     begin
         casez ({opCode,funct7,funct3})
-            'b0110011_0000000_000: out = 'b0_0000_0_0_1_0_0_0_XXX;   // add
+            'b0110011_0000000_000: out = 'b0_0000_0_0_1_0_0_0_111;   // add
 
             'b0010011_???????_000: out = 'b1_0000_0_0_1_0_0_0_000;   // addi
 
-            'b0110011_0000000_111: out = 'b0_0001_0_0_1_0_0_0_XXX;   // and
-            'b0110011_0100000_000: out = 'b0_0010_0_0_1_0_0_0_XXX;   // sub
-            'b0110011_0000000_010: out = 'b0_0011_0_0_1_0_0_0_XXX;   // slt
-            'b0110011_0000001_100: out = 'b0_0100_0_0_1_0_0_0_XXX;   // div
-            'b0110011_0000001_110: out = 'b0_0101_0_0_1_0_0_0_XXX;   // rem
-            'b0110011_0000000_001: out = 'b0_1000_0_0_1_0_0_0_XXX;   // sll           
-            'b0110011_0000000_101: out = 'b0_1001_0_0_1_0_0_0_XXX;   // srl           
-            'b0110011_0100000_101: out = 'b0_1001_0_0_1_0_0_0_XXX;   // sra           
+            'b0110011_0000000_111: out = 'b0_0001_0_0_1_0_0_0_111;   // and
+            'b0110011_0100000_000: out = 'b0_0010_0_0_1_0_0_0_111;   // sub
+            'b0110011_0000000_010: out = 'b0_0011_0_0_1_0_0_0_111;   // slt
+            'b0110011_0000001_100: out = 'b0_0100_0_0_1_0_0_0_111;   // div
+            'b0110011_0000001_110: out = 'b0_0101_0_0_1_0_0_0_111;   // rem
+            'b0110011_0000000_001: out = 'b0_1000_0_0_1_0_0_0_111;   // sll           
+            'b0110011_0000000_101: out = 'b0_1001_0_0_1_0_0_0_111;   // srl           
+            'b0110011_0100000_101: out = 'b0_1001_0_0_1_0_0_0_111;   // sra           
 
-            'b1100011_???????_000: out = 'b0_0010_0_X_0_1_0_0_010;   // beq
-            'b1100011_???????_100: out = 'b0_0110_0_X_0_1_0_0_010;   // blt
+            'b1100011_???????_000: out = 'b0_0010_0_0_0_1_0_0_010;   // beq
+            'b1100011_???????_100: out = 'b0_0110_0_0_0_1_0_0_010;   // blt
 
             'b0000011_???????_010: out = 'b1_0000_0_1_1_0_0_0_000;   // lw
-            'b0100011_???????_010: out = 'b1_0000_1_X_0_0_0_0_001;   // sw
+            'b0100011_???????_010: out = 'b1_0000_1_0_0_0_0_0_001;   // sw
 
             'b0110111_???????_???: out = 'b1_0111_0_0_1_0_0_0_100;   // lui
             'b0010111_???????_???: out = 'b1_1010_0_0_1_0_0_0_100;   // auipc
 
-            'b1101111_???????_???: out = 'bX_XXXX_0_0_1_0_1_0_011;   // jal
+            'b1101111_???????_???: out = 'b0_0000_0_0_1_0_1_0_011;   // jal
             'b1100111_???????_000: out = 'b1_0000_0_0_1_0_0_1_000;   // jalr
             
-            default: out = 'bX_XXXX_X_X_X_X_X_X_XX;
+            default:;
         endcase
     end
 
@@ -261,8 +259,8 @@ module mux2_1(	input [31:0] a,b,
 
 	always@(*)
     begin
-		if (select==0) y = a;
-		else y = b;
+		if (select==0) y <= a;
+		else y <= b;
     end
 
 endmodule
