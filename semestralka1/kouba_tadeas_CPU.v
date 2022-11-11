@@ -8,8 +8,8 @@ module processor( input         clk, reset, //
                   output [31:0] PC, //
                   input  [31:0] instruction, //
                   output        WE, //
-                  output [31:0] address_to_mem, //
-                  output [31:0] data_to_mem, //
+                  output unsigned [31:0] address_to_mem, //
+                  output unsigned [31:0] data_to_mem, //
                   input  [31:0] data_from_mem //
                 );
     
@@ -37,7 +37,8 @@ module processor( input         clk, reset, //
     reg BranchOutcome;
     wire [31:0] brJalxMuxOut;
     wire [31:0] PCn;
-    
+
+    wire [31:0] data;
     wire [31:0] pc;
     wire [31:0] PCPlus4;
     wire [31:0] ImmOpPlusPC;
@@ -46,6 +47,7 @@ module processor( input         clk, reset, //
     assign PCPlus4 = pc + 4;
     assign ImmOpPlusPC = ImmOp + pc;
     assign SrcA = Reg1; // Operand1 of ALU 
+    assign data = data_from_mem;
 
     always @(*)
     begin
@@ -80,7 +82,7 @@ module processor( input         clk, reset, //
 
     mux2_1 brJalxMux(ALUout, PCPlus4, BranchJalx, brJalxMuxOut );
     
-    mux2_1 dataMemMux( brJalxMuxOut, data_from_mem, MemToReg, res);
+    mux2_1 dataMemMux( brJalxMuxOut, data, MemToReg, res);
 
     mux2_1 PCMux(PCPlus4, branchTarget, BranchOutcome, PCn);
 
@@ -272,7 +274,7 @@ endmodule
 module registerSet ( input [4:0] A1, A2, A3,
                      input clk, reset, WE3,
                      input [31:0] WD3,
-                     output reg [31:0] RD1, RD2
+                     output [31:0] RD1, RD2
                     );
 
     reg [31:0] rf[31:0];
@@ -288,16 +290,6 @@ module registerSet ( input [4:0] A1, A2, A3,
             end
     end
 
-    always @(A1)
-    begin
-        RD1 = rf[A1];
-    end
-    
-    always @(A2)
-    begin
-        RD2 = rf[A2];
-    end
-
     always @(posedge clk)
     begin
         if (WE3)
@@ -306,6 +298,11 @@ module registerSet ( input [4:0] A1, A2, A3,
             else;
         else;
     end
+  
+    assign RD1 = rf[A1];
+    assign RD2 = rf[A2];
+
+
 endmodule
 //=========================================================================================
 //=========================================================================================
